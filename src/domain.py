@@ -27,6 +27,15 @@ class InvalidTransition(DomainError):
     """The requested state transition is not valid."""
 
 
+class BatchBlockedError(ConflictError):
+    """A batch use case failed review; no state was changed."""
+
+    def __init__(self, reasons):
+        self.reasons = list(reasons)
+        messages = "; ".join(str(r.get("message", r.get("code", ""))) for r in self.reasons)
+        super().__init__("batch blocked: " + messages)
+
+
 class Role(str, Enum):
     viewer = "viewer"
     admin = "admin"

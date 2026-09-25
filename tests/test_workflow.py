@@ -32,7 +32,17 @@ class WorkflowTest(unittest.TestCase):
 
     def test_full_workflow(self):
         created = {}
-        steps = [{'op': 'create', 'as': 'participant', 'kind': 'participant', 'data': {'name': 'Participant One'}}, {'op': 'create', 'as': 'consent', 'kind': 'consent', 'data': {'participant_id': '{participant}', 'scope': ['research']}}, {'op': 'transition', 'target': 'consent', 'action': 'activate', 'data': {'scope': ['research'], 'version': 'v1', 'expires_at': '2099-01-01'}, 'expect': 'active'}, {'op': 'create', 'as': 'sample', 'kind': 'sample', 'data': {'participant_id': '{participant}', 'sample_code': 'B-001', 'collected_at': '2026-01-01'}}, {'op': 'transition', 'target': 'sample', 'action': 'store', 'data': {'freezer': 'F1', 'position': 'A1', 'consent_id': '{consent}'}, 'expect': 'stored'}, {'op': 'create', 'as': 'withdrawal', 'kind': 'withdrawal', 'data': {'participant_id': '{participant}', 'requested_at': '2026-03-01'}}, {'op': 'transition', 'target': 'withdrawal', 'action': 'approve', 'data': {'reason': 'participant request', 'sample_ids': ['{sample}']}, 'expect': 'approved'}, {'op': 'transition', 'target': 'withdrawal', 'action': 'execute', 'data': {'executed_at': '2026-03-02'}, 'expect': 'executed'}]
+        steps = [
+            {'op': 'create', 'as': 'participant', 'kind': 'participant', 'data': {'name': 'Participant One'}},
+            {'op': 'create', 'as': 'consent', 'kind': 'consent', 'data': {'participant_id': '{participant}', 'scope': ['research']}},
+            {'op': 'transition', 'target': 'consent', 'action': 'activate', 'data': {'scope': ['research'], 'version': 'v1', 'expires_at': '2099-01-01'}, 'expect': 'active'},
+            {'op': 'create', 'as': 'sample', 'kind': 'sample', 'data': {'participant_id': '{participant}', 'sample_code': 'B-001', 'collected_at': '2026-01-01'}},
+            {'op': 'transition', 'target': 'sample', 'action': 'store', 'data': {'freezer': 'F1', 'position': 'A1', 'consent_id': '{consent}'}, 'expect': 'stored'},
+            {'op': 'create', 'as': 'withdrawal', 'kind': 'withdrawal', 'data': {'participant_id': '{participant}', 'requested_at': '2026-03-01'}},
+            {'op': 'transition', 'target': 'withdrawal', 'action': 'approve', 'data': {'reason': 'participant request', 'sample_ids': ['{sample}']}, 'expect': 'approved'},
+            {'op': 'reconcile', 'target': 'withdrawal'},
+            {'op': 'transition', 'target': 'withdrawal', 'action': 'execute', 'data': {'executed_at': '2026-03-02', 'samples': [{'id': '{sample}', 'version': 2}], 'consents': [{'id': '{consent}', 'version': 2}]}, 'expect': 'executed'},
+        ]
         for step in steps:
             if step["op"] == "create":
                 entity = self.service.create(
@@ -42,6 +52,11 @@ class WorkflowTest(unittest.TestCase):
                     step.get("idempotency_key"),
                 )
                 created[step["as"]] = entity["id"]
+            elif step["op"] == "reconcile":
+                result = self.service.reconcile_withdrawal(
+                    self.actor, created[step["target"]]
+                )
+                self.assertEqual(result["status"], "approved")
             else:
                 entity = self.service.transition(
                     self.actor,
@@ -52,6 +67,11 @@ class WorkflowTest(unittest.TestCase):
                 )
             if "expect" in step:
                 self.assertEqual(entity["status"], step["expect"])
+
+        sample = self.service.get(created["sample"])
+        consent = self.service.get(created["consent"])
+        self.assertEqual(sample["status"], "withdrawn")
+        self.assertEqual(consent["status"], "withdrawn")
 
 
 if __name__ == "__main__":

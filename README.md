@@ -37,6 +37,23 @@ python3 app.py --db ./data.db --port 8302
 
 请求身份通过`X-User-Id`和`X-Role`请求头传入。创建和动作的可执行角色由规则引擎控制。
 
+## 撤回执行（按参与者一次核对、整批处理）
+
+撤回申请经委员会`approve`后，不再允许人工逐个修改样本。执行分两步：
+
+1. **核对**：`POST /api/entities/<withdrawal_id>/actions`，请求体`{"action":"reconcile"}`。
+   系统按参与者返回权威清单：该参与者所有未终结样本（`collected`/`stored`/`on_loan`）与所有生效同意（`active`），不重复、不含他人样本，并写一条`reconcile`审计。
+2. **执行**：`{"action":"execute","data":{"executed_at":"...","samples":[{"id","version"},...],"consents":[{"id","version"},...]}}`。
+   规则引擎把回传清单与当前状态逐项核对。出现下列任一情况，**整批不生效**（HTTP 409 `BatchBlockedError`，`reasons`列出全部原因），撤回单和所有相关对象保持原状，并写`execute_blocked`审计：
+   - `SAMPLE_DUPLICATE`/`CONSENT_DUPLICATE`：清单内重复；
+   - `SAMPLE_FOREIGN_OR_TERMINAL`/`CONSENT_FOREIGN_OR_INACTIVE`：混入他人或已终结对象；
+   - `SAMPLE_NOT_COVERED`/`CONSENT_NOT_COVERED`：未覆盖该参与者全部未终结样本或生效同意；
+   - `SAMPLE_ON_LOAN`：任一样本处于借出状态；
+   - `SAMPLE_VERSION_CHANGED`/`CONSENT_VERSION_CHANGED`/`WITHDRAWAL_VERSION_CHANGED`：核对后版本发生变化；
+   - `MISSING_RECONCILIATION`：未先核对。
+
+全部通过时，生效同意、全部未终结样本、撤回单在**单个数据库事务**内分别终结为`withdrawn`/`withdrawn`/`executed`，每个对象各留一条审计。`withdrawn`是样本终态，不允许再`loan`/`store`/`return`；样本的`withdraw`动作也不能通过通用 action 接口绕过批量编排。
+
 ## 测试
 
 ```bash
