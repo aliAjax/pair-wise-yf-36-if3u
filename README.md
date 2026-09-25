@@ -26,6 +26,33 @@ python3 app.py --db ./data.db --port 8302
 
 - `participant`：参与者；`consent`：同意版本；`sample`：样本；`withdrawal`：撤回申请。
 
+## 撤回的按参与者批量执行
+
+撤回不再由人工逐个改样本。委员会批准（`withdrawal/approve`）时，系统按
+`participant_id` 生成并冻结清单快照（写入撤回单的 `data.manifest`）：
+
+- `sample_ids` 不得重复，不得包含不存在或属于其他参与者的样本；
+- 不得夹带已终结样本（`anonymized`/`destroyed`/`withdrawn`）；
+- 必须穷尽该参与者当前所有未终结样本（`collected`/`stored`/`on_loan`），遗漏即拒绝；
+- 快照记录每个样本与每个生效中同意的 `id`、`status`、`version`。
+
+执行（`withdrawal/execute`）由服务层一次性核对并处理：
+
+- 以批准快照为唯一清单，重新核对归属、覆盖率、版本与实时状态；
+- 任一样本处于 `on_loan`，或清单中任何样本/同意在批准后发生过版本或状态变化
+  （包括出现了清单外的新未终结样本、批准后又有同意生效），**整批不生效**，
+  返回 HTTP 409 `BatchConflictError`，`reasons` 列出全部原因；
+- 核对通过时，在**单个数据库事务**内统一把生效同意置为 `withdrawn`、
+  所有清单样本置为 `withdrawn`、撤回单置为 `executed`，条件更新保证并发下
+  要么全部生效、要么全部回滚；
+- 被拦截的执行也会写入 `execute_blocked` 审计记录并附全部原因；
+- 成功执行对每个被终结对象各写一条 `withdraw` 审计，撤回单上的 `execute`
+  审计包含样本/同意数量与完整 ID 清单。
+
+`withdrawn` 是样本终态，没有任何转出迁移：处理后的样本不能借出、归还、
+重新入库、销毁或匿名。撤回执行后，该参与者也不能再激活新的同意。
+状态变化后需重新批准（刷新清单快照）才能再次执行。
+
 ## 主要接口
 
 - `GET /health`：健康检查。

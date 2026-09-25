@@ -23,6 +23,19 @@ class ConflictError(DomainError):
     """A version or uniqueness constraint was violated."""
 
 
+class BatchConflictError(ConflictError):
+    """A batch use case is blocked and nothing was applied.
+
+    ``reasons`` lists every blocker found during the single per-participant
+    check so callers can report all of them at once.
+    """
+
+    def __init__(self, reasons):
+        self.reasons = [str(reason) for reason in reasons]
+        message = "withdrawal execution blocked: " + "; ".join(self.reasons)
+        super().__init__(message)
+
+
 class InvalidTransition(DomainError):
     """The requested state transition is not valid."""
 
